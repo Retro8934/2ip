@@ -5,9 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Быстрая проверка IP и провайдера</title>
     <style>
-        /* Минималистичный и быстрый CSS без внешних шрифтов */
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
             background-color: #f0f2f5;
             color: #1c1e21;
             display: flex;
@@ -26,7 +25,6 @@
             text-align: center;
             box-sizing: border-box;
             position: relative;
-            overflow: hidden;
         }
         h1 {
             font-size: 20px;
@@ -44,7 +42,6 @@
             text-transform: uppercase;
             color: #8d949e;
             font-weight: 600;
-            letter-spacing: 0.5px;
             margin-bottom: 4px;
             display: block;
         }
@@ -55,12 +52,10 @@
             word-break: break-all;
         }
         #ip {
-            color: #1877f2; /* Акцентный синий цвет для IP */
+            color: #1877f2;
         }
-        /* Легкий CSS-индикатор загрузки */
         .loading {
             display: inline-block;
-            position: relative;
             width: 80px;
             height: 18px;
             background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
@@ -72,7 +67,6 @@
             0% { background-position: 200% 0; }
             100% { background-position: -200% 0; }
         }
-        /* Окно блокировки (VPN / Нет сети) */
         .overlay {
             display: none;
             position: absolute;
@@ -83,6 +77,7 @@
             justify-content: center;
             padding: 20px;
             box-sizing: border-box;
+            border-radius: 12px;
         }
         .alert {
             background-color: #ffebe9;
@@ -92,7 +87,6 @@
             border-radius: 8px;
             font-weight: 600;
             font-size: 14px;
-            line-height: 1.4;
         }
     </style>
 </head>
@@ -100,19 +94,24 @@
 
 <div class="card">
     <div id="screenOverlay" class="overlay">
-        <div id="alertBox" class="alert">Проверка сети...</div>
+        <div id="alertBox" class="alert">Проверка...</div>
     </div>
 
-    <h1>Информация о подключении</h1>
+    <h1>Информация о сети</h1>
     
     <div class="row">
-        <span class="label">Ваш IP-адрес</span>
+        <span class="label">IP-адрес</span>
         <span id="ip" class="value"><span class="loading"></span></span>
     </div>
     
     <div class="row">
-        <span class="label">Интернет-провайдер</span>
+        <span class="label">Провайдер</span>
         <span id="isp" class="value"><span class="loading"></span></span>
+    </div>
+
+    <div class="row">
+        <span class="label">Страна / Город</span>
+        <span id="location" class="value"><span class="loading"></span></span>
     </div>
 </div>
 
@@ -130,73 +129,47 @@
     }
 
     async function loadNetworkData() {
-        // Мгновенная проверка физического интернета
         if (!navigator.onLine) {
-            showError("❌ Отсутствует подключение к интернету.<br>Проверьте вашу сеть.");
+            showError("❌ Нет подключения к интернету.");
             return;
         }
         hideError();
 
         try {
-            // Шаг 1: Сверхбыстрое получение IP напрямую из инфраструктуры Cloudflare
-            const cfResponse = await fetch('https://1.1.1.1/cdn-cgi/trace');
-            if (!cfResponse.ok) throw new Error('Cloudflare Offline');
+            // Прямой запрос к независимому API по HTTPS (без Cloudflare)
+            const response = await fetch('https://ipapi.co/json/');
             
-            const text = await cfResponse.text();
-            const lines = text.split('\n');
-            const cfData = {};
-            lines.forEach(line => {
-                const parts = line.split('=');
-                if (parts[0]) cfData[parts[0]] = parts[1];
-            });
+            if (!response.ok) throw new Error('Ошибка сервера геоданных');
+            
+            const data = await response.json();
 
-            const userIp = cfData.ip;
-            if (!userIp) throw new Error('No IP found');
+            // Проверка на ошибки в ответе самого API
+            if (data.error) throw new Error(data.reason || 'Ошибка получения данных');
 
-            // Сразу же выводим IP пользователю, чтобы не заставлять его ждать
-            document.getElementById('ip').innerText = userIp;
+            // Выводим все данные на экран
+            document.getElementById('ip').innerText = data.ip;
+            document.getElementById('isp').innerText = data.org || data.asn_org || "Не определен";
+            document.getElementById('location').innerText = `${data.country_name}, ${data.city}`;
 
-            // Шаг 2: Параллельно запрашиваем провайдера по этому IP (работает по HTTPS)
-            let ispName = "Определен автоматически";
-            let ipTimezone = "";
-
-            try {
-                const infoResponse = await fetch(`https://ipapi.co/${userIp}/json/`);
-                if (infoResponse.ok) {
-                    const info = await infoResponse.json();
-                    ispName = info.org || info.asn_org || info.asn || ispName;
-                    ipTimezone = info.timezone;
-                }
-            } catch (e) {
-                // Если база провайдеров недоступна/заблокирована AdBlock-ом, пишем резервное имя
-                ispName = "Локальный провайдер (Резерв)";
-            }
-
-            // Выводим провайдера
-            document.getElementById('isp').innerText = ispName;
-
-            // Шаг 3: Асинхронная проверка на VPN (по таймзоне и ключевым словам провайдера)
+            // Фоновая проверка на запущенный VPN (по несоответствию временных зон)
             const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-            const lowIsp = ispName.toLowerCase();
-            const hasVpnKeywords = lowIsp.includes('vpn') || lowIsp.includes('hosting') || lowIsp.includes('server') || lowIsp.includes('datacenter');
+            const ipTimezone = data.timezone;
+            const lowOrg = (data.org || '').toLowerCase();
+            const isVpnOrg = lowOrg.includes('vpn') || lowOrg.includes('hosting') || lowOrg.includes('datacenter');
 
-            if ((ipTimezone && deviceTimezone !== ipTimezone) || hasVpnKeywords) {
-                showError("⚠️ Обнаружен включенный VPN!<br>Пожалуйста, выключите VPN для корректной работы сайта.");
+            if ((ipTimezone && deviceTimezone !== ipTimezone) || isVpnOrg) {
+                showError("⚠️ Обнаружен включенный VPN!<br>Пожалуйста, выключите его для нормальной работы.");
             }
 
         } catch (error) {
             console.error(error);
-            showError("❌ Ошибка загрузки.<br>Соединение заблокировано вашим провайдером или брандмауэром.");
+            showError("❌ Не удалось получить данные.<br>Запрос заблокирован системой безопасности или провайдером.");
         }
     }
 
-    // Обработчики событий сети для мгновенной реакции без перезагрузки страницы
     window.addEventListener('online', loadNetworkData);
-    window.addEventListener('offline', () => {
-        showError("❌ Отсутствует подключение к интернету.<br>Проверьте вашу сеть.");
-    });
+    window.addEventListener('offline', () => showError("❌ Нет подключения к интернету."));
 
-    // Запуск скрипта
     window.onload = loadNetworkData;
 </script>
 
