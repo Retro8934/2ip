@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Узнать свой IP адрес и провайдера</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+        }
+        h1 {
+            color: #333;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        .info-block {
+            margin: 15px 0;
+            font-size: 18px;
+            color: #555;
+        }
+        .label {
+            font-weight: bold;
+            color: #777;
+            display: block;
+            font-size: 14px;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        .value {
+            color: #2c3e50;
+            font-size: 20px;
+        }
+        #ip {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        .loading {
+            color: #7f8c8d;
+            font-style: italic;
+        }
+        /* Стили для предупреждений */
+        .warning-box {
+            display: none;
+            background-color: #fde8e8;
+            color: #e74c3c;
+            border: 1px solid #f8b4b4;
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Ваш сетевой адрес</h1>
+    
+    <div class="info-block">
+        <span class="label">IP-Адрес:</span>
+        <span id="ip" class="value loading">Загрузка...</span>
+    </div>
+    
+    <div class="info-block">
+        <span class="label">Провайдер (ISP):</span>
+        <span id="isp" class="value loading">Загрузка...</span>
+    </div>
+
+    <div class="info-block">
+        <span class="label">Местоположение:</span>
+        <span id="location" class="value loading">Загрузка...</span>
+    </div>
+
+    <div id="warning" class="warning-box"></div>
+</div>
+
+<script>
+    const warningEl = document.getElementById('warning');
+
+    // Функция для вывода ошибки на экран
+    function showWarning(message) {
+        warningEl.innerText = message;
+        warningEl.style.display = 'block';
+    }
+
+    // Функция для очистки предупреждений
+    function hideWarning() {
+        warningEl.style.display = 'none';
+    }
+
+    // Проверка VPN по косвенным признакам
+    function checkVpnSigns(data) {
+        // 1. Проверяем не совпадает ли временная зона устройства с зоной полученного IP
+        const deviceTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const ipTimeZone = data.timezone;
+
+        // 2. Проверяем маркеры хостингов в названии провайдера (обычно VPN крутятся на хостингах)
+        const ispName = data.isp.toLowerCase();
+        const vpnKeywords = ['hosting', 'vpn', 'server', 'digitalocean', 'linode', 'ovh', 'hetzner', 'amazon', 'google cloud', 'microsoft data'];
+        
+        const isHostingIsp = vpnKeywords.some(keyword => ispName.includes(keyword));
+
+        if (deviceTimeZone !== ipTimeZone || isHostingIsp) {
+            showWarning("Похоже, у вас включен VPN. Выключите VPN, чтобы сайт работал нормально.");
+        }
+    }
+
+    async function getIpDetails() {
+        // Проверка 1: встроенная в браузер проверка наличия сети
+        if (!navigator.onLine) {
+            showWarning("Интернет отсутствует. Проверьте подключение к сети.");
+            document.querySelectorAll('.value').forEach(el => el.innerText = "—");
+            return;
+        }
+
+        hideWarning();
+
+        try {
+            const response = await fetch('http://ip-api.com/json/?lang=ru');
+            const data = await response.json();
+
+            if (data.status === "success") {
+                document.getElementById('ip').innerText = data.query;
+                document.getElementById('isp').innerText = data.isp;
+                document.getElementById('location').innerText = `${data.city}, ${data.country}`;
+                
+                document.querySelectorAll('.value').forEach(el => el.classList.remove('loading'));
+
+                // Запускаем проверку на VPN после успешного получения данных
+                checkVpnSigns(data);
+            } else {
+                document.getElementById('ip').innerText = "Ошибка получения данных";
+            }
+        } catch (error) {
+            console.error("Ошибка:", error);
+            // Если fetch сорвался, скорее всего тоже нет интернета
+            showWarning("Интернет отсутствует или заблокирован запрос к серверу.");
+            document.querySelectorAll('.value').forEach(el => el.innerText = "Ошибка");
+        }
+    }
+
+    // Отслеживание событий включения/выключения интернета в реальном времени
+    window.addEventListener('online', getIpDetails);
+    window.addEventListener('offline', () => {
+        showWarning("Интернет отсутствует. Проверьте подключение к сети.");
+        document.querySelectorAll('.value').forEach(el => el.innerText = "—");
+    });
+
+    // Запуск при загрузке
+    window.onload = getIpDetails;
+</script>
+
+</body>
+</html>
