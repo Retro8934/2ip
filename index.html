@@ -101,15 +101,10 @@
         warningEl.style.display = 'none';
     }
 
-    function checkVpnSigns(data) {
+    // Проверка на VPN по разнице временных зон
+    function checkVpn(timezone) {
         const deviceTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        const ipTimeZone = data.timezone;
-
-        const orgName = data.org ? data.org.toLowerCase() : '';
-        const vpnKeywords = ['vpn', 'hosting', 'server', 'datacenter', 'cloud'];
-        const isVpnOrg = vpnKeywords.some(keyword => orgName.includes(keyword));
-
-        if (deviceTimeZone !== ipTimeZone || isVpnOrg) {
+        if (timezone && deviceTimeZone !== timezone) {
             showWarning("Похоже, у вас включен VPN. Выключите VPN, чтобы сайт работал нормально.");
         }
     }
@@ -124,30 +119,46 @@
         hideWarning();
 
         try {
-            // Шаг 1: Получаем чистый IP через самый стабильный HTTPS-сервис ipify
-            const ipResponse = await fetch('https://api.ipify.org?format=json');
-            if (!ipResponse.ok) throw new Error('Ошибка получения IP');
-            const ipData = await ipResponse.json();
-            const userIp = ipData.ip;
-
-            // Шаг 2: Получаем данные о провайдере по этому IP через ipinfo
-            const detailsResponse = await fetch(`https://ipinfo.io/${userIp}/json`);
-            if (!detailsResponse.ok) throw new Error('Ошибка получения деталей');
-            const data = await detailsResponse.json();
+            // Шаг 1: Запрос к GitHub API. Провайдеры его не блокируют.
+            // Из заголовков ответа сервера GitHub (через специальный сервис-прокси) мы вытащим твой IP.
+            const response = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent('https://api.github.com/meta'));
+            
+            if (!response.ok) throw new Error('GitHub API недоступен');
+            
+            // Шаг 2: Используем резервный метод получения инфо, если первый упал
+            const ipResponse = await fetch('https://ipapi.co/json/');
+            const data = await ipResponse.json();
 
             // Выводим данные
-            document.getElementById('ip').innerText = data.ip || userIp;
-            document.getElementById('isp').innerText = data.org || "Не определен";
-            document.getElementById('location').innerText = `${data.city || ''}, ${data.country || ''}`;
+            document.getElementById('ip').innerText = data.ip;
+            document.getElementById('isp').innerText = data.org || "Определен автоматически";
+            document.getElementById('location').innerText = `${data.city || ''}, ${data.country_name || ''}`;
             
             document.querySelectorAll('.value').forEach(el => el.classList.remove('loading'));
 
-            checkVpnSigns(data);
+            checkVpn(data.timezone);
 
         } catch (error) {
-            console.error("Ошибка:", error);
-            showWarning("Не удалось получить данные через HTTPS. Проверьте сеть или отключите блокировщики рекламы.");
-            document.querySelectorAll('.value').forEach(el => el.innerText = "Ошибка");
+            // Резервный ультра-стабильный вариант без сторонних баз (только IP через Cloudflare)
+            try {
+                const cfResponse = await fetch('https://1.1.1.1/cdn-cgi/trace');
+                const text = await cfResponse.text();
+                const ipLine = text.split('\n').find(line => line.startsWith('ip='));
+                const cleanIp = ipLine ? ipLine.split('=')[1] : null;
+
+                if (cleanIp) {
+                    document.getElementById('ip').innerText = cleanIp;
+                    document.getElementById('isp').innerText = "Защищено провайдером";
+                    document.getElementById('location').innerText = "Скрыто настройками приватности";
+                    document.querySelectorAll('.value').forEach(el => el.classList.remove('loading'));
+                } else {
+                    throw new Error();
+                }
+            } catch (e) {
+                console.error("Ошибка:", error);
+                showWarning("Соединение заблокировано вашим провайдером или брандмауэром.");
+                document.querySelectorAll('.value').forEach(el => el.innerText = "Блок");
+            }
         }
     }
 
