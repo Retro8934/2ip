@@ -53,7 +53,6 @@
             color: #7f8c8d;
             font-style: italic;
         }
-        /* Стили для предупреждений */
         .warning-box {
             display: none;
             background-color: #fde8e8;
@@ -93,36 +92,29 @@
 <script>
     const warningEl = document.getElementById('warning');
 
-    // Функция для вывода ошибки на экран
     function showWarning(message) {
         warningEl.innerText = message;
         warningEl.style.display = 'block';
     }
 
-    // Функция для очистки предупреждений
     function hideWarning() {
         warningEl.style.display = 'none';
     }
 
-    // Проверка VPN по косвенным признакам
     function checkVpnSigns(data) {
-        // 1. Проверяем не совпадает ли временная зона устройства с зоной полученного IP
         const deviceTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
         const ipTimeZone = data.timezone;
 
-        // 2. Проверяем маркеры хостингов в названии провайдера (обычно VPN крутятся на хостингах)
-        const ispName = data.isp.toLowerCase();
-        const vpnKeywords = ['hosting', 'vpn', 'server', 'digitalocean', 'linode', 'ovh', 'hetzner', 'amazon', 'google cloud', 'microsoft data'];
-        
-        const isHostingIsp = vpnKeywords.some(keyword => ispName.includes(keyword));
+        const orgName = data.org ? data.org.toLowerCase() : '';
+        const vpnKeywords = ['vpn', 'hosting', 'server', 'datacenter', 'cloud'];
+        const isVpnOrg = vpnKeywords.some(keyword => orgName.includes(keyword));
 
-        if (deviceTimeZone !== ipTimeZone || isHostingIsp) {
+        if (deviceTimeZone !== ipTimeZone || isVpnOrg) {
             showWarning("Похоже, у вас включен VPN. Выключите VPN, чтобы сайт работал нормально.");
         }
     }
 
     async function getIpDetails() {
-        // Проверка 1: встроенная в браузер проверка наличия сети
         if (!navigator.onLine) {
             showWarning("Интернет отсутствует. Проверьте подключение к сети.");
             document.querySelectorAll('.value').forEach(el => el.innerText = "—");
@@ -132,37 +124,39 @@
         hideWarning();
 
         try {
-            const response = await fetch('http://ip-api.com/json/?lang=ru');
-            const data = await response.json();
+            // Шаг 1: Получаем чистый IP через самый стабильный HTTPS-сервис ipify
+            const ipResponse = await fetch('https://api.ipify.org?format=json');
+            if (!ipResponse.ok) throw new Error('Ошибка получения IP');
+            const ipData = await ipResponse.json();
+            const userIp = ipData.ip;
 
-            if (data.status === "success") {
-                document.getElementById('ip').innerText = data.query;
-                document.getElementById('isp').innerText = data.isp;
-                document.getElementById('location').innerText = `${data.city}, ${data.country}`;
-                
-                document.querySelectorAll('.value').forEach(el => el.classList.remove('loading'));
+            // Шаг 2: Получаем данные о провайдере по этому IP через ipinfo
+            const detailsResponse = await fetch(`https://ipinfo.io/${userIp}/json`);
+            if (!detailsResponse.ok) throw new Error('Ошибка получения деталей');
+            const data = await detailsResponse.json();
 
-                // Запускаем проверку на VPN после успешного получения данных
-                checkVpnSigns(data);
-            } else {
-                document.getElementById('ip').innerText = "Ошибка получения данных";
-            }
+            // Выводим данные
+            document.getElementById('ip').innerText = data.ip || userIp;
+            document.getElementById('isp').innerText = data.org || "Не определен";
+            document.getElementById('location').innerText = `${data.city || ''}, ${data.country || ''}`;
+            
+            document.querySelectorAll('.value').forEach(el => el.classList.remove('loading'));
+
+            checkVpnSigns(data);
+
         } catch (error) {
             console.error("Ошибка:", error);
-            // Если fetch сорвался, скорее всего тоже нет интернета
-            showWarning("Интернет отсутствует или заблокирован запрос к серверу.");
+            showWarning("Не удалось получить данные через HTTPS. Проверьте сеть или отключите блокировщики рекламы.");
             document.querySelectorAll('.value').forEach(el => el.innerText = "Ошибка");
         }
     }
 
-    // Отслеживание событий включения/выключения интернета в реальном времени
     window.addEventListener('online', getIpDetails);
     window.addEventListener('offline', () => {
         showWarning("Интернет отсутствует. Проверьте подключение к сети.");
         document.querySelectorAll('.value').forEach(el => el.innerText = "—");
     });
 
-    // Запуск при загрузке
     window.onload = getIpDetails;
 </script>
 
